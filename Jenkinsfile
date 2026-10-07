@@ -1,13 +1,10 @@
 // Jenkinsfile = pipeline-as-code. This file LIVES IN THE REPO, so the CI job
-// definition is version-controlled with the tests themselves. When this repo is
-// scanned by Jenkins, it automatically creates/updates a pipeline job.
+// definition is version-controlled with the tests themselves.
 //
-// TOOL STRATEGY (interview point): the `tools { }` block requires Jenkins
-// Global Tool Configuration entries with exact matching names. To keep this
-// pipeline PORTABLE (works on any Jenkins out of the box), we do NOT use the
-// tools block. Instead the pipeline auto-installs its own toolchain with
-// explicit versions: JDK (Temurin 11), Maven 3.9.x, and Allure 2.25.0.
-// Same behaviour everywhere, zero manual Jenkins setup.
+// TOOL STRATEGY (interview point): the pipeline is SELF-PROVISIONING — it
+// downloads and caches its own JDK, Maven and Allure into .tools/ using plain
+// curl. No Jenkins Global Tools configuration and no extra plugins required,
+// so the same pipeline runs on any Jenkins out of the box.
 
 pipeline {
 
@@ -16,7 +13,6 @@ pipeline {
 
     environment {
         // Pinned tool versions — an upgrade is a ONE-LINE change here.
-        JAVA_VERSION = '11.0.21+9'
         MAVEN_VERSION = '3.9.6'
         ALLURE_VERSION = '2.25.0'
     }
@@ -32,50 +28,61 @@ pipeline {
 
         stage('Setup JDK') {
             steps {
-                // The "Temurin Installations" plugin downloads + caches the exact
-                // JDK version for us. JAVA_HOME is then exported for later stages.
-                // installTemurinJDK RETURN: exports JAVA_HOME into the environment.
-                installTemurinJDK platform: 'linux', architecture: 'x64', version: "${JAVA_VERSION}"
-                sh "java -version 2>&1 | head -1"
+                // Download Temurin JDK 11 from the Adoptium API (platform is
+                // resolved automatically for mac/linux, x64/aarch64) and cache
+                // it in .tools/jdk. Reused on every rerun of the same agent.
+                sh """
+                    if [ ! -d ".tools/jdk" ]; then
+                        mkdir -p .tools
+                        ARCH=\$(case \$(uname -m) in arm64|aarch64) echo aarch64 ;; *) echo x64 ;; esac)
+                        OS=\$(uname | tr '[:upper:]' '[:lower:]')
+                        curl -fsSL "https://api.adoptium.net/v3/binary/latest/11/ga/\${OS}/\${ARCH}/jdk/hotspot/normal/eclipse" -o /tmp/jdk.tgz
+                        mkdir -p .tools/jdk
+                        tar -xzf /tmp/jdk.tgz -C .tools/jdk --strip-components=1
+                        rm -f /tmp/jdk.tgz
+                    fi
+                    \$PWD/.tools/jdk/bin/java -version 2>&1 | head -1
+                """
             }
         }
 
         stage('Setup Maven') {
             steps {
-                // The "Maven Installation" plugin style is not needed; we simply
-                // download the official Maven binary tarball once per agent and
-                // cache it in the workspace .tools folder.
+                // Download the official Maven binary tarball once per agent and
+                // cache it in the workspace .tools folder for reuse.
                 sh """
                     if [ ! -d ".tools/apache-maven-${MAVEN_VERSION}" ]; then
                         mkdir -p .tools
                         curl -fsSL https://archive.apache.org/dist/maven/maven-3/${MAVEN_VERSION}/binaries/apache-maven-${MAVEN_VERSION}-bin.tar.gz | tar -xz -C .tools
                     fi
-                    echo "Maven ready: \$(.tools/apache-maven-${MAVEN_VERSION}/bin/mvn -v | head -1)"
+                    echo "Maven ready"
                 """
             }
         }
 
         stage('Setup Allure') {
             steps {
-                // Same cache pattern for the Allure commandline tool. Downloaded
-                // from the official GitHub release into .tools, reused on reruns.
+                // Same cache pattern for the Allure commandline tool. The tgz
+                // extracts a folder named allure-<version> which matches our path.
                 sh """
                     if [ ! -d ".tools/allure-${ALLURE_VERSION}" ]; then
                         mkdir -p .tools
                         curl -fsSL https://github.com/allure-framework/allure2/releases/download/${ALLURE_VERSION}/allure-${ALLURE_VERSION}.tgz | tar -xz -C .tools
-                        mv .tools/allure-${ALLURE_VERSION} .tools/allure-${ALLURE_VERSION} 2>/dev/null || true
                     fi
-                    echo "Allure ready: \$(.tools/allure-${ALLURE_VERSION}/bin/allure --version 2>/dev/null || echo downloaded)"
+                    echo "Allure ready"
                 """
             }
         }
 
         stage('Build & Run API Tests') {
             steps {
-                // "mvn clean test" = delete old target folder, compile, run testng.xml.
-                // The suite runs all 3 test classes: smoke, CRUD, and end-to-end.
-                // We invoke Maven via its full path from our cached .tools folder.
-                sh ".tools/apache-maven-${MAVEN_VERSION}/bin/mvn clean test"
+                // Export the downloaded JDK for THIS stage, then run the suite:
+                // "mvn clean test" = clean old target, compile, run testng.xml.
+                // The suite runs all 3 test classes: smoke, CRUD, end-to-end.
+                withEnv(["JAVA_HOME=${env.WORKSPACE}/.tools/jdk",
+                         "PATH+JDK=${env.WORKSPACE}/.tools/jdk/bin"]) {
+                    sh ".tools/apache-maven-${MAVEN_VERSION}/bin/mvn clean test"
+                }
             }
         }
 
@@ -95,7 +102,7 @@ pipeline {
             // Publishing the Allure report on failure is crucial — a failed build
             // without a report forces someone to rerun locally just to see why.
 
-            // Show the Allure report as a build sidebar link and dashboard graph.
+            // Show the Allure report as a build sidebar link and trend graph.
             // Requires the "Allure Jenkins Plugin" to be installed in Jenkins.
             allure([
                 includeProperties: false,
@@ -105,8 +112,8 @@ pipeline {
                 results: [[path: 'target/allure-results']]
             ])
 
-            // Also archive the raw results + generated report as build artifacts
-            // for the audit trail. Empty-safe so an early failure doesn't error.
+            // Also archive raw results + generated HTML report as build
+            // artifacts for the audit trail. Empty-safe on early failure.
             archiveArtifacts artifacts: 'target/allure-results/**', allowEmptyArchive: true
             archiveArtifacts artifacts: 'target/site/allure-report/**', allowEmptyArchive: true
         }
