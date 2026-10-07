@@ -1,121 +1,76 @@
-// Jenkinsfile = pipeline-as-code. This file LIVES IN THE REPO, so the CI job
-// definition is version-controlled with the tests themselves.
+// This Jenkinsfile is the complete CI pipeline written as code.
+// Every push to GitHub makes Jenkins: download the code, run the API test
+// suite with Maven, and publish an Allure report — so bugs are caught
+// within minutes of a commit.
 //
-// TOOL STRATEGY (interview point): the pipeline is SELF-PROVISIONING — it
-// downloads and caches its own JDK, Maven and Allure into .tools/ using plain
-// curl. No Jenkins Global Tools configuration and no extra plugins required,
-// so the same pipeline runs on any Jenkins out of the box.
+// TOOL STRATEGY (simple and proven): instead of downloading tools inside the
+// pipeline, we REUSE the tools already installed on the machine via Homebrew
+// (mvn, allure, java). Jenkins starts its shell with a minimal PATH, so we
+// prepend /opt/homebrew/bin — that single line makes every Homebrew tool
+// available to all stages. This is a classic CI lesson: the CI machine's
+// shell is NOT the same as your interactive terminal.
 
 pipeline {
 
-    // Run on any available Jenkins agent.
+    // "agent any" = run on any available Jenkins machine.
     agent any
 
+    // Environment variables for the whole pipeline.
+    // The PATH line is the key fix: Jenkins' shell cannot see Homebrew tools
+    // (mvn, allure) unless we add /opt/homebrew/bin to the front of PATH.
     environment {
-        // Pinned tool versions — an upgrade is a ONE-LINE change here.
-        MAVEN_VERSION = '3.9.6'
-        ALLURE_VERSION = '2.25.0'
+        PATH = "/opt/homebrew/bin:${env.PATH}"
+    }
+
+    // Keep only the last 5 builds so Jenkins' disk does not fill up
+    // with old logs and reports. Housekeeping as code, not a manual tweak.
+    options {
+        buildDiscarder(logRotator(numToKeepStr: '5'))
     }
 
     stages {
 
+        // Stage 1: download the exact commit that triggered the build.
+        // This guarantees traceability — every build result maps to one commit.
         stage('Checkout') {
             steps {
-                // Pull the exact commit that triggered the build (git push, PR, etc).
                 checkout scm
             }
         }
 
-        stage('Setup JDK') {
+        // Stage 2: run the API test suite.
+        // "mvn clean test" = delete old output, compile fresh, run testng.xml
+        // (all 11 tests: auth/negative, CRUD, end-to-end) via Surefire.
+        // The Allure TestNG adapter writes raw JSON results into
+        // target/allure-results during this stage.
+        stage('Run Tests') {
             steps {
-                // Download Temurin JDK 11 from the Adoptium API (platform is
-                // resolved automatically for mac/linux, x64/aarch64) and cache
-                // it in .tools/jdk. Reused on every rerun of the same agent.
-                sh """
-                    if [ ! -d ".tools/jdk" ]; then
-                        mkdir -p .tools
-                        ARCH=\$(case \$(uname -m) in arm64|aarch64) echo aarch64 ;; *) echo x64 ;; esac)
-                        OS=\$(uname | tr '[:upper:]' '[:lower:]')
-                        curl -fsSL "https://api.adoptium.net/v3/binary/latest/11/ga/\${OS}/\${ARCH}/jdk/hotspot/normal/eclipse" -o /tmp/jdk.tgz
-                        mkdir -p .tools/jdk
-                        tar -xzf /tmp/jdk.tgz -C .tools/jdk --strip-components=1
-                        rm -f /tmp/jdk.tgz
-                    fi
-                    \$PWD/.tools/jdk/bin/java -version 2>&1 | head -1
-                """
+                sh 'mvn clean test'
             }
         }
 
-        stage('Setup Maven') {
-            steps {
-                // Download the official Maven binary tarball once per agent and
-                // cache it in the workspace .tools folder for reuse.
-                sh """
-                    if [ ! -d ".tools/apache-maven-${MAVEN_VERSION}" ]; then
-                        mkdir -p .tools
-                        curl -fsSL https://archive.apache.org/dist/maven/maven-3/${MAVEN_VERSION}/binaries/apache-maven-${MAVEN_VERSION}-bin.tar.gz | tar -xz -C .tools
-                    fi
-                    echo "Maven ready"
-                """
-            }
-        }
-
-        stage('Setup Allure') {
-            steps {
-                // Same cache pattern for the Allure commandline tool. The tgz
-                // extracts a folder named allure-<version> which matches our path.
-                sh """
-                    if [ ! -d ".tools/allure-${ALLURE_VERSION}" ]; then
-                        mkdir -p .tools
-                        curl -fsSL https://github.com/allure-framework/allure2/releases/download/${ALLURE_VERSION}/allure-${ALLURE_VERSION}.tgz | tar -xz -C .tools
-                    fi
-                    echo "Allure ready"
-                """
-            }
-        }
-
-        stage('Build & Run API Tests') {
-            steps {
-                // Export the downloaded JDK for THIS stage, then run the suite:
-                // "mvn clean test" = clean old target, compile, run testng.xml.
-                // The suite runs all 3 test classes: smoke, CRUD, end-to-end.
-                withEnv(["JAVA_HOME=${env.WORKSPACE}/.tools/jdk",
-                         "PATH+JDK=${env.WORKSPACE}/.tools/jdk/bin"]) {
-                    sh ".tools/apache-maven-${MAVEN_VERSION}/bin/mvn clean test"
-                }
-            }
-        }
-
+        // Stage 3: convert the raw JSON results into the rich HTML Allure
+        // report and attach it to the build page (via the Allure plugin).
         stage('Generate Allure Report') {
             steps {
-                // allure commandline reads the raw results produced in
-                // target/allure-results during the test run and builds the HTML
-                // report into target/site/allure-report, ready to be published.
-                sh ".tools/allure-${ALLURE_VERSION}/bin/allure generate target/allure-results -o target/site/allure-report --clean"
+                allure includeProperties: false,
+                        jdk: '',
+                        results: [[path: 'target/allure-results']]
             }
         }
     }
 
+    // "post" actions run after the stages finish, whatever the outcome.
     post {
+
+        // Always runs — success or failure.
         always {
-            // "always" means this runs whether the build PASSED or FAILED.
-            // Publishing the Allure report on failure is crucial — a failed build
-            // without a report forces someone to rerun locally just to see why.
+            echo 'Pipeline finished — see the Allure report for full details'
+        }
 
-            // Show the Allure report as a build sidebar link and trend graph.
-            // Requires the "Allure Jenkins Plugin" to be installed in Jenkins.
-            allure([
-                includeProperties: false,
-                jdk: '',
-                properties: [],
-                reportBuildPolicy: 'ALWAYS',
-                results: [[path: 'target/allure-results']]
-            ])
-
-            // Also archive raw results + generated HTML report as build
-            // artifacts for the audit trail. Empty-safe on early failure.
-            archiveArtifacts artifacts: 'target/allure-results/**', allowEmptyArchive: true
-            archiveArtifacts artifacts: 'target/site/allure-report/**', allowEmptyArchive: true
+        // Runs only when the build failed; points the engineer to the report.
+        failure {
+            echo 'Build FAILED — check the Allure report and logs/framework.log'
         }
     }
 }
