@@ -1,0 +1,144 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+    This is the Maven build file. It is like the "shopping list" of the project.
+    Whatever libraries (RestAssured, TestNG, Allure, Jackson) we need, we declare
+    them here, and Maven automatically downloads them from the internet when we build.
+-->
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <!-- groupId + artifactId + version together give a unique name to our project -->
+    <groupId>com.booking</groupId>
+    <artifactId>API_Automation_Framework</artifactId>
+    <version>1.0-SNAPSHOT</version>
+    <packaging>jar</packaging>
+    <name>Restful-Booker API Automation Framework</name>
+
+    <!-- properties are like global variables of the pom. We define versions once
+         here and use them below with ${...}. So if we want to upgrade a version,
+         we change it in only ONE place, which keeps the project easy to maintain. -->
+    <properties>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <maven.compiler.source>11</maven.compiler.source>
+        <maven.compiler.target>11</maven.compiler.target>
+        <restassured.version>5.4.0</restassured.version>
+        <testng.version>7.9.0</testng.version>
+        <jackson.version>2.16.1</jackson.version>
+        <allure.version>2.25.0</allure.version>
+        <lombok.skip>true</lombok.skip>
+    </properties>
+
+    <dependencies>
+        <!-- RestAssured is the main library. It lets us call REST APIs (GET, POST, PUT,
+             PATCH, DELETE) using simple BDD style keywords: given(), when(), then().
+             BDD style means we write tests in "Given-When-Then" language, so even a
+             non-technical person can understand what the test is doing. -->
+        <dependency>
+            <groupId>io.rest-assured</groupId>
+            <artifactId>rest-assured</artifactId>
+            <version>${restassured.version}</version>
+        </dependency>
+
+        <!-- This is a small extra RestAssured module. It gives us "JsonPath" and
+             "XmlPath" classes, which we use to pick values out of a JSON/XML response,
+             for example response.jsonPath().getString("firstname"). -->
+        <dependency>
+            <groupId>io.rest-assured</groupId>
+            <artifactId>json-path</artifactId>
+            <version>${restassured.version}</version>
+        </dependency>
+
+        <!-- TestNG is our test runner. It decides which tests run, in what order,
+             and how they are grouped. It also gives annotations like @BeforeMethod,
+             @Test and hard assertions like assertEquals which fail the test. -->
+        <dependency>
+            <groupId>org.testng</groupId>
+            <artifactId>testng</artifactId>
+            <version>${testng.version}</version>
+        </dependency>
+
+        <!-- Jackson is the JSON serializer/deserializer library. "Serialization" means
+             converting our Java POJO object into a JSON request body, and
+             "Deserialization" means converting the JSON response back into a POJO.
+             RestAssured uses Jackson automatically when we pass a POJO as body. -->
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
+            <version>${jackson.version}</version>
+        </dependency>
+
+        <!-- Allure TestNG adapter. Allure is our reporting tool. Just by adding this
+             dependency and the aspectj one below, every test and step we write shows
+             up as a beautiful, detailed HTML report with request/response logs. -->
+        <dependency>
+            <groupId>io.qameta.allure</groupId>
+            <artifactId>allure-testng</artifactId>
+            <version>${allure.version}</version>
+        </dependency>
+
+        <!-- Allure needs "AspectJ" to inject its logging code around our test methods.
+             Without this, Allure cannot capture @Step and @Attachment details. -->
+        <dependency>
+            <groupId>org.aspectj</groupId>
+            <artifactId>aspectjweaver</artifactId>
+            <version>1.9.21</version>
+        </dependency>
+
+        <!-- Log4j2 API: the logging facade our framework classes use. Interview
+             explanation: we code against the API module, not the core module, so
+             the underlying logging implementation can be swapped without touching
+             framework code — the classic "program to an interface" principle. -->
+        <dependency>
+            <groupId>org.apache.logging.log4j</groupId>
+            <artifactId>log4j-api</artifactId>
+            <version>2.22.1</version>
+        </dependency>
+
+        <!-- Log4j2 Core: the actual engine that writes logs to console and files
+             according to the rules in log4j2.xml. The API above calls into this. -->
+        <dependency>
+            <groupId>org.apache.logging.log4j</groupId>
+            <artifactId>log4j-core</artifactId>
+            <version>2.22.1</version>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <!-- Compiler plugin: tells Maven which Java version to compile the code with. -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <version>3.11.0</version>
+                <configuration>
+                    <source>11</source>
+                    <target>11</target>
+                </configuration>
+            </plugin>
+
+            <!-- Surefire plugin: this is the plugin that actually RUNS the tests when we
+                 fire "mvn test". We point it to our testng.xml file so that Maven runs
+                 exactly the suite we designed. -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <version>3.2.5</version>
+                <configuration>
+                    <suiteXmlFiles>
+                        <suiteXmlFile>testng.xml</suiteXmlFile>
+                    </suiteXmlFiles>
+                    <!-- "argLine" does two important jobs here:
+                         1. "-Dtestng.dtd.http=true" lets TestNG load testng.xml over http.
+                         2. The aspectjweaver javaagent is REQUIRED for Allure. It weaves
+                            Allure's logging code into our @Step methods at runtime.
+                            Without this line, the Allure report would come out empty. -->
+                    <argLine>
+                        -javaagent:"${settings.localRepository}/org/aspectj/aspectjweaver/1.9.21/aspectjweaver-1.9.21.jar"
+                        -Dtestng.dtd.http=true
+                    </argLine>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+</project>

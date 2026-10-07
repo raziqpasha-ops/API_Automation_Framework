@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+    testng.xml is the "suite plan" of the framework. It tells TestNG exactly which
+    test classes to run and in what order. Maven's surefire plugin points to this
+    file, so both a local "mvn test" and the Jenkins job execute the same suite.
+
+    Order matters here: AuthAndNegativeTest runs first as a smoke check (ping +
+    token), then the component CRUD tests, and finally the big end-to-end flow.
+-->
+<!DOCTYPE suite SYSTEM "https://testng.org/testng-1.0.dtd">
+<suite name="Restful-Booker API Suite" verbose="1">
+
+    <!-- The listeners are wired HERE, not in the test classes. This keeps tests
+         free of framework plumbing — they contain only scenario logic.
+         TestListener : logging of start/pass/fail with full failure diagnosis.
+         RetryListener: globally attaches RetryAnalyzer to EVERY test, so a flaky
+                        failure is rerun automatically before being reported. -->
+    <listeners>
+        <listener class-name="com.booking.listeners.TestListener"/>
+        <listener class-name="com.booking.listeners.RetryListener"/>
+    </listeners>
+
+    <test name="Auth, Negative and Health Checks">
+        <classes>
+            <class name="com.booking.tests.AuthAndNegativeTest"/>
+        </classes>
+    </test>
+
+    <test name="Booking CRUD Component Tests">
+        <classes>
+            <class name="com.booking.tests.BookingCrudTest"/>
+        </classes>
+    </test>
+
+    <test name="Booking End-to-End Flow">
+        <classes>
+            <class name="com.booking.tests.E2E_BookingFlowTest"/>
+        </classes>
+    </test>
+
+</suite>

@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+    log4j2.xml controls WHERE logs go and WHICH levels are shown.
+
+    Interview explanation of the pieces:
+      - Appender  : a destination for log lines. We define two:
+                    * Console  -> prints to stdout (visible live in Jenkins).
+                    * File     -> appends into logs/framework.log with a timestamped
+                                  ROLLING policy, so old runs' logs are archived
+                                  instead of one file growing forever.
+      - Pattern   : the format of each line: time, level, thread, class, message.
+                    Thread name matters when tests run in parallel — you can see
+                    which thread did what.
+      - Logger level: INFO for our framework packages means INFO and above
+                    (INFO, WARN, ERROR) are written; chatty DEBUG is filtered out.
+                    Change one attribute here to switch the whole framework to
+                    DEBUG — no code change. That is the power of externalized
+                    logging config.
+-->
+<Configuration status="WARN">
+
+    <Appenders>
+
+        <!-- Console appender: what you watch live while tests run. -->
+        <Console name="Console" target="SYSTEM_OUT">
+            <PatternLayout pattern="%d{HH:mm:ss.SSS} [%t] %-5level %logger{36} - %msg%n"/>
+        </Console>
+
+        <!-- Rolling file appender: persistent evidence for post-run analysis. -->
+        <RollingFile name="FileLogger"
+                     fileName="logs/framework.log"
+                     filePattern="logs/framework-%d{yyyy-MM-dd_HH-mm-ss}.log">
+            <PatternLayout pattern="%d{yyyy-MM-dd HH:mm:ss.SSS} [%t] %-5level %logger{36} - %msg%n"/>
+            <Policies>
+                <!-- A new file starts per run (timestamped), old ones are kept. -->
+                <OnStartupTriggeringPolicy/>
+            </Policies>
+        </RollingFile>
+
+    </Appenders>
+
+    <Loggers>
+        <!-- Framework-wide level: INFO. Flip to DEBUG here when investigating. -->
+        <Logger name="com.booking" level="info" additivity="false">
+            <AppenderRef ref="Console"/>
+            <AppenderRef ref="FileLogger"/>
+        </Logger>
+
+        <!-- Root catches anything outside com.booking (e.g. third-party noise). -->
+        <Root level="warn">
+            <AppenderRef ref="Console"/>
+        </Root>
+    </Loggers>
+
+</Configuration>
