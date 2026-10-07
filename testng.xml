@@ -4,11 +4,30 @@
     test classes to run and in what order. Maven's surefire plugin points to this
     file, so both a local "mvn test" and the Jenkins job execute the same suite.
 
-    Order matters here: AuthAndNegativeTest runs first as a smoke check (ping +
-    token), then the component CRUD tests, and finally the big end-to-end flow.
+    PARALLEL EXECUTION (the interview topic): the attribute
+        parallel="tests"  means the three <test> blocks below each get their
+                          own thread and run AT THE SAME TIME.
+        thread-count="3"  is the maximum number of threads TestNG may use —
+                          we have exactly 3 <test> blocks, so all three start
+                          together and the whole suite finishes in roughly the
+                          time of the SLOWEST block instead of the SUM of all.
+
+    WHY THIS LEVEL IS SAFE: each <test> block is an independent scenario with
+    its own bookings and its own token — they share no state. Inside the CRUD
+    block the @Test methods stay SEQUENTIAL (ordered priorities sharing one
+    booking), because running those against each other would corrupt their
+    shared test subject. This is the professional choice: parallelize at the
+    level where tests are independent, keep order where state is shared.
+
+    WHY THE FRAMEWORK SURVIVES PARALLELISM: RestAssured's RequestSpecification
+    is not thread-safe, so SpecFactory hands each thread its own spec via
+    ThreadLocal. Log4j2 is thread-safe by design, and RetryAnalyzer instances
+    are created fresh per test by TestNG — so logging, retry and HTTP all
+    behave correctly when threads overlap.
 -->
 <!DOCTYPE suite SYSTEM "https://testng.org/testng-1.0.dtd">
-<suite name="Restful-Booker API Suite" verbose="1">
+<suite name="Restful-Booker API Suite" verbose="1"
+       parallel="tests" thread-count="3">
 
     <!-- The listeners are wired HERE, not in the test classes. This keeps tests
          free of framework plumbing — they contain only scenario logic.

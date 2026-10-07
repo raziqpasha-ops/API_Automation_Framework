@@ -112,16 +112,130 @@ public class AuthAndNegativeTest {
         // fluent builder) and .body (RETURN: same spec — every builder method
         // hands back the specification so calls chain indefinitely).
         Booking replacement = BookingTestDataFactory.buildStandardBooking();
+
+        // THE BDD CHAIN, KEYWORD BY KEYWORD — this is the exact flow every
+        // RestAssured call follows, and the #1 thing interviewers ask about.
+        // BDD = Behaviour Driven Development style: the code reads like a
+        // sentence — "GIVEN these conditions, WHEN I send this request,
+        // THEN I can check the response." Each keyword below is explained
+        // line by line with its RETURN TYPE so the chain is never a mystery.
+
+        // .given()  — THE START OF THE CHAIN. It opens the "request setup"
+        //   section where we describe everything the request NEEDS: base URL,
+        //   headers, path params, body, cookies. Think of it as saying
+        //   "GIVEN a request with these details...". It is a STATIC method
+        //   on the RestAssured entry class, so no object creation is needed.
+
+        //   RETURN TYPE: io.restassured.specification.RequestSpecification —
+        //   an "interface" (a Java contract object) that COLLECTS all the
+        //   request details you add. Nothing is sent to the server yet —
+        //   given() only opens the collector.
+
         int status = RestAssured
-                .given()                                    // RETURN: RequestSpecification
-                    .spec(SpecFactory.getRequestSpec())     // RETURN: RequestSpecification (this, chained)
-                    .pathParam("id", id)                    // RETURN: RequestSpecification (this)
-                    .body(replacement)                      // RETURN: RequestSpecification (this)
-                .when()                                     // RETURN: RequestSpecification (marks the verb section)
-                    .put(Endpoints.BOOKING_BY_ID)           // RETURN: io.restassured.response.Response — fires HTTP PUT
-                .then()                                     // RETURN: io.restassured.response.ValidatableResponse
-                    .extract()                              // RETURN: io.restassured.response.ExtractableResponse
-                    .statusCode();                          // RETURN: int — the raw HTTP status code
+                .given()                                    // RETURN: RequestSpecification — opens the request-setup section; collects details, sends nothing yet
+
+        // .spec(...)  — "INJECT THE SHARED BLUEPRINT". Our SpecFactory already
+        //   built a ready-made request containing the base URL, JSON content
+        //   type, and logging filters. Instead of repeating those settings in
+        //   every test, .spec() copies them all in with ONE line.
+        //   This is the framework's biggest reuse point: every test uses it.
+
+        //   RETURN TYPE: RequestSpecification (the SAME object, "this") —
+        //   every setup method hands back itself so the next .method() can
+        //   chain immediately. This is called the FLUENT BUILDER pattern:
+        //   the return value of one call is the receiver of the next.
+
+                    .spec(SpecFactory.getRequestSpec())     // RETURN: RequestSpecification (this, chained) — copies baseUri + JSON + logging from our shared blueprint
+
+        // .pathParam("id", id)  — FILL A URL PLACEHOLDER. Our endpoint constant
+        //   is "/booking/{id}" and {id} is a placeholder written in braces.
+        //   This method REPLACES {id} with the real value at runtime, so the
+        //   final URL becomes /booking/543 (whatever "id" holds).
+        //   Path params identify ONE resource — here, the booking to attack.
+
+        //   RETURN TYPE: RequestSpecification (this) — again the same object,
+        //   so the chain continues. Because the URL is built from a constant
+        //   + a parameter, there are zero hand-built URL strings anywhere.
+
+                    .pathParam("id", id)                    // RETURN: RequestSpecification (this) — replaces {id} in /booking/{id} with the real booking number
+
+        // .body(replacement)  — ATTACH THE REQUEST PAYLOAD. We pass our Booking
+        //   POJO (a plain Java object) — NOT a JSON string. RestAssured sees
+        //   a POJO and calls Jackson behind the scenes to SERIALIZE it into
+        //   the JSON request body automatically. This is SERIALIZATION.
+
+        //   Benefit: compile-time safety. If a field name is wrong in the
+        //   POJO, the COMPILER catches it — a hand-typed JSON string would
+        //   fail silently at runtime with confusing server errors instead.
+
+        //   RETURN TYPE: RequestSpecification (this) — same collector object,
+        //   now holding the payload, ready for the next link in the chain.
+
+                    .body(replacement)                      // RETURN: RequestSpecification (this) — serializes the Booking POJO into a JSON request body via Jackson
+
+        // .when()  — THE TURNING POINT OF THE SENTENCE. In BDD grammar,
+        //   "GIVEN the setup ... WHEN I perform the action ...". This method
+        //   does not change any request data — it simply CLOSES the setup
+        //   section and OPENS the "action" section where the HTTP verb
+        //   (get/post/put/patch/delete) is chosen. It exists purely to make
+        //   the code read like the Given-When-Then sentence structure.
+
+        //   RETURN TYPE: still RequestSpecification (this) — same object with
+        //   a flag flipped internally, so the next call must be an HTTP verb.
+
+                .when()                                     // RETURN: RequestSpecification (this) — closes the setup section; next call must be an HTTP verb
+
+        // .put(Endpoints.BOOKING_BY_ID)  — FIRE THE ACTUAL HTTP REQUEST. This
+        //   is the moment network traffic happens: RestAssured combines the
+        //   spec's base URL + the path param + the body, sends the real PUT
+        //   to the server, waits for the reply, and wraps the whole reply
+        //   (status line, headers, body) into one Response object.
+        //   Here it deliberately has NO cookie — testing that the API blocks
+        //   unauthorized updates (the 403 security contract).
+
+        //   RETURN TYPE: io.restassured.response.Response — a NEW object
+        //   representing everything the server sent back. This is the first
+        //   method in the chain with a DIFFERENT return type, because the
+        //   "request phase" has ended and the "response phase" has begun.
+
+                    .put(Endpoints.BOOKING_BY_ID)           // RETURN: Response — the HTTP PUT actually fires here; the server's full reply is wrapped in this object
+
+        // .then()  — OPEN THE VALIDATION SECTION. "WHEN I did the action ...
+        //   THEN I can check things." The Response object is now handed over
+        //   to its "validatable" twin, which offers assertion methods like
+        //   statusCode(200), body("firstname", ...), time(lessThan(...)).
+        //   Same pattern as given(): a section marker that changes what you
+        //   may call next, without touching any data.
+
+        //   RETURN TYPE: io.restassured.response.ValidatableResponse — the
+        //   response wearing a "checker" hat: from here on, every method
+        //   either asserts something or extracts something.
+
+                .then()                                     // RETURN: ValidatableResponse — switches into the validation section; all assert/extract methods live here
+
+        // .extract()  — SWITCH FROM "CHECK" TO "TAKE". By default then() methods
+        //   ASSERT (pass or fail the test). .extract() flips the meaning: the
+        //   next method is used to PULL A VALUE out of the response instead of
+        //   checking it. We want the status code as a NUMBER to store in our
+        //   "status" variable, not just to assert it blindly.
+
+        //   RETURN TYPE: io.restassured.response.ExtractableResponse — a view
+        //   of the same response whose methods RETURN values (statusCode()
+        //   -> int, path("x") -> value, as(Class) -> POJO) instead of asserting.
+
+                    .extract()                              // RETURN: ExtractableResponse — flips the next call from "assert this" to "give me this value"
+
+        // .statusCode()  — THE FINAL LINK: hand back the HTTP status number.
+        //   Because extract() was called first, this RETURNS the int instead
+        //   of asserting it. The value (expected: 403) lands in our variable,
+        //   and the very next line asserts it with our reusable keyword.
+        //   So the full chain reads: given setup -> when PUT fired ->
+        //   then validated -> extracted -> asserted. One readable sentence.
+
+        //   RETURN TYPE: int — the raw HTTP status code (403 expected here),
+        //   which the assertEquals keyword below turns into a pass/fail.
+
+                    .statusCode();                          // RETURN: int — the HTTP status code as a number, stored in "status" for the assertion below
 
         // assertEquals(int, int) RETURN: void; throws if the API FAILED to block
         // us. 403 is the security contract: no token, no write access.
@@ -157,16 +271,21 @@ public class AuthAndNegativeTest {
     @Story("Health check")
     public void healthCheckIsUp() {
 
-        // Full BDD chain with RestAssured's predefined keywords, each annotated
-        // with its RETURN TYPE — this is the exact chain interviewers ask about:
+        // THE SAME BDD CHAIN, SHORT VERSION — for a simple GET with no body
+        // and no path params. Still Given -> When -> Then, just fewer links:
+        // no .pathParam needed (GET /ping has no {placeholder}), no .body
+        // needed (a GET carries no payload). Every keyword's job and its
+        // RETURN TYPE is identical to the long chain explained above, so
+        // read that one for the full keyword-by-keyword walkthrough.
+
         int status = RestAssured
-                .given()                                    // RETURN: RequestSpecification
-                    .spec(SpecFactory.getRequestSpec())     // RETURN: RequestSpecification (injects baseUri+headers+logging)
-                .when()                                     // RETURN: RequestSpecification (switch to action section)
-                    .get(Endpoints.PING)                    // RETURN: Response — executes HTTP GET /ping
-                .then()                                     // RETURN: ValidatableResponse — validation section
-                    .extract()                              // RETURN: ExtractableResponse — allows pulling values out
-                    .statusCode();                          // RETURN: int — the HTTP status (201 expected here)
+                .given()                                    // RETURN: RequestSpecification — opens the request-setup section; collects details, sends nothing yet
+                    .spec(SpecFactory.getRequestSpec())     // RETURN: RequestSpecification (this) — one line injects baseUri + JSON + logging from the shared blueprint; the framework's biggest reuse point
+                .when()                                     // RETURN: RequestSpecification (this) — closes the setup section; the next call must be an HTTP verb
+                    .get(Endpoints.PING)                    // RETURN: Response — the HTTP GET actually fires here; the server's full reply is wrapped in this object
+                .then()                                     // RETURN: ValidatableResponse — switches into the validation section; all assert/extract methods live here
+                    .extract()                              // RETURN: ExtractableResponse — flips the next call from "assert this" to "give me this value"
+                    .statusCode();                          // RETURN: int — the HTTP status code as a number (201 expected for a healthy /ping)
 
         // The Ping endpoint returns 201 with body "Created" when the API is
         // alive (unusual — most health checks use 200 — but that is what THIS

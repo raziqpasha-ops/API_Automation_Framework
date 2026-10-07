@@ -20,51 +20,68 @@ import io.restassured.specification.ResponseSpecification;
  * We build these ONCE here and inject them into every test using given().spec(...)
  * and then().spec(...). This removes repeated boilerplate from every test and is
  * the single biggest source of "reusability" in a RestAssured framework.
+ *
+ * PARALLEL-SAFE DESIGN (ThreadLocal): RestAssured's RequestSpecification is NOT
+ * guaranteed thread-safe — when TestNG runs tests in parallel, two threads
+ * sharing one spec object can corrupt each other's request details. The fix is
+ * java.lang.ThreadLocal: it gives EVERY thread its own private copy of the spec.
+ * ThreadLocal works like a map of "thread -> value" under the hood: when thread
+ * A calls .get() it receives thread A's spec, thread B receives B's spec, and
+ * neither can ever see or touch the other's. The blueprint is still defined in
+ * ONE place (the builder below), so we keep 100% reuse AND gain parallel safety.
  */
 public class SpecFactory {
 
-    // We keep the request spec in a variable so it is built only on first use.
-    // This is lazy initialization — we do not pay the cost until it is needed.
-    private static RequestSpecification requestSpec;
+    // ThreadLocal "box" that holds one RequestSpecification PER THREAD.
+    // withInitial(...) says: "the first time a thread asks, build it this way."
+    // The builder lambda runs lazily and separately for every new thread.
+    private static final ThreadLocal<RequestSpecification> requestSpec =
+            ThreadLocal.withInitial(() ->
+
+                    // RequestSpecBuilder is the fluent builder for request specifications.
+                    // We chain settings one after another and finish with .build().
+                    // This code runs ONCE PER THREAD, so each thread gets a fresh,
+                    // isolated spec with identical settings.
+                    new RequestSpecBuilder()
+                            // setBaseUri is where we say WHICH server to hit. The value comes
+                            // from ConfigManager, so environment switching needs no code change.
+                            .setBaseUri(ConfigManager.getBaseUrl())
+                            // Every request we send in this project is JSON, so we set it here
+                            // once instead of writing .contentType() in every single test.
+                            .setContentType(ContentType.JSON)
+                            // This filter prints the FULL outgoing request into the console and
+                            // the surefire report. When a test fails at 2am, the printed request
+                            // is the first thing you look at to debug it.
+                            .addFilter(new RequestLoggingFilter())
+                            // Same idea, but for the incoming response — full body and headers
+                            // get printed, which means the evidence of what the API returned
+                            // is always captured automatically.
+                            .addFilter(new ResponseLoggingFilter())
+                            .build());
 
     // Private constructor: utility class, no objects should be created.
     private SpecFactory() { }
 
     /**
-     * Returns a ready-to-use RequestSpecification with base URI, content type
-     * and request/response logging switched on.
+     * Returns the CALLING THREAD's own RequestSpecification.
+     * ThreadLocal.get() RETURN TYPE: RequestSpecification — the value stored
+     * for the current thread, built on first use via withInitial above.
+     * Sequential runs behave exactly as before; parallel runs are now safe.
      */
     public static RequestSpecification getRequestSpec() {
 
-        // Build only once; every later call re-uses the same object (thread-safe enough
-        // for our sequential TestNG run and it saves setup time).
-        if (requestSpec == null) {
-
-            // RequestSpecBuilder is the fluent builder for request specifications.
-            // We chain settings one after another and finish with .build().
-            requestSpec = new RequestSpecBuilder()
-                    // setBaseUri is where we say WHICH server to hit. The value comes
-                    // from ConfigManager, so environment switching needs no code change.
-                    .setBaseUri(ConfigManager.getBaseUrl())
-                    // Every request we send in this project is JSON, so we set it here
-                    // once instead of writing .contentType() in every single test.
-                    .setContentType(ContentType.JSON)
-                    // This filter prints the FULL outgoing request into the console and
-                    // the surefire report. When a test fails at 2am, the printed request
-                    // is the first thing you look at to debug it.
-                    .addFilter(new RequestLoggingFilter())
-                    // Same idea, but for the incoming response — full body and headers
-                    // get printed, which means the evidence of what the API returned
-                    // is always captured automatically.
-                    .addFilter(new ResponseLoggingFilter())
-                    .build();
-        }
-        return requestSpec;
+        // .get() looks up the value belonging to THE CURRENT THREAD only.
+        // First call on a thread builds the spec; every later call on that
+        // same thread returns the same instance (fast + consistent).
+        return requestSpec.get();
     }
 
     /**
      * Returns a ResponseSpecification that every JSON success response must satisfy.
      * We check the status code 200 and that the body is JSON, in ONE place.
+     *
+     * NOTE: ResponseSpecifications here are built fresh per CALL (not shared),
+     * which is inherently thread-safe — no ThreadLocal needed for these.
      */
     public static ResponseSpecification getSuccessResponseSpec() {
 
